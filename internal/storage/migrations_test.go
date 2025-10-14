@@ -100,6 +100,7 @@ func TestMigratorApply(t *testing.T) {
 		"modules",
 		"settings",
 		"notifications",
+		"join_requests",
 	}
 
 	for _, table := range requiredTables {
@@ -111,5 +112,98 @@ func TestMigratorApply(t *testing.T) {
 		if !result.Valid {
 			t.Fatalf("expected table %s to exist", table)
 		}
+	}
+
+	//6.- Confirm the join request status enum is present with the expected values.
+	rows, err := db.QueryContext(ctx, "SELECT enumlabel FROM pg_enum WHERE enumtypid = 'join_request_status'::regtype ORDER BY enumsortorder")
+	if err != nil {
+		t.Fatalf("failed to query join_request_status enum: %v", err)
+	}
+	defer rows.Close()
+
+	var labels []string
+	for rows.Next() {
+		var label string
+		if scanErr := rows.Scan(&label); scanErr != nil {
+			t.Fatalf("failed to scan enum label: %v", scanErr)
+		}
+		labels = append(labels, label)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("failed to iterate enum labels: %v", err)
+	}
+
+	expectedLabels := []string{"pending", "approved", "declined"}
+	if len(labels) != len(expectedLabels) {
+		t.Fatalf("unexpected enum label count: got %d want %d", len(labels), len(expectedLabels))
+	}
+	for i, label := range labels {
+		if label != expectedLabels[i] {
+			t.Fatalf("unexpected enum label at position %d: got %s want %s", i, label, expectedLabels[i])
+		}
+	}
+
+	//7.- Verify the join request status column uses the enum type and defaults to pending.
+	var statusDataType, statusUDTName, statusDefault string
+	statusQuery := "SELECT data_type, udt_name, column_default FROM information_schema.columns WHERE table_name = 'join_requests' AND column_name = 'status'"
+	if err := db.QueryRowContext(ctx, statusQuery).Scan(&statusDataType, &statusUDTName, &statusDefault); err != nil {
+		t.Fatalf("failed to describe join_requests.status: %v", err)
+	}
+	if statusDataType != "USER-DEFINED" {
+		t.Fatalf("unexpected status data type: %s", statusDataType)
+	}
+	if statusUDTName != "join_request_status" {
+		t.Fatalf("unexpected status udt: %s", statusUDTName)
+	}
+	if statusDefault != "'pending'::join_request_status" {
+		t.Fatalf("unexpected status default: %s", statusDefault)
+	}
+
+	//8.- Ensure the payload column stores JSONB with a deterministic default value.
+	var payloadDataType, payloadDefault string
+	payloadQuery := "SELECT data_type, column_default FROM information_schema.columns WHERE table_name = 'join_requests' AND column_name = 'payload'"
+	if err := db.QueryRowContext(ctx, payloadQuery).Scan(&payloadDataType, &payloadDefault); err != nil {
+		t.Fatalf("failed to describe join_requests.payload: %v", err)
+	}
+	if payloadDataType != "jsonb" {
+		t.Fatalf("unexpected payload data type: %s", payloadDataType)
+	}
+	if payloadDefault != "'{}'::jsonb" {
+		t.Fatalf("unexpected payload default: %s", payloadDefault)
+	}
+
+	//9.- Confirm timestamps default to UTC values so records always contain audit metadata.
+	var createdType, createdDefault string
+	createdQuery := "SELECT data_type, column_default FROM information_schema.columns WHERE table_name = 'join_requests' AND column_name = 'created_at'"
+	if err := db.QueryRowContext(ctx, createdQuery).Scan(&createdType, &createdDefault); err != nil {
+		t.Fatalf("failed to describe join_requests.created_at: %v", err)
+	}
+	if createdType != "timestamp with time zone" {
+		t.Fatalf("unexpected created_at type: %s", createdType)
+	}
+	if createdDefault == "" {
+		t.Fatalf("expected created_at default to be set")
+	}
+
+	var updatedType, updatedDefault string
+	updatedQuery := "SELECT data_type, column_default FROM information_schema.columns WHERE table_name = 'join_requests' AND column_name = 'updated_at'"
+	if err := db.QueryRowContext(ctx, updatedQuery).Scan(&updatedType, &updatedDefault); err != nil {
+		t.Fatalf("failed to describe join_requests.updated_at: %v", err)
+	}
+	if updatedType != "timestamp with time zone" {
+		t.Fatalf("unexpected updated_at type: %s", updatedType)
+	}
+	if updatedDefault == "" {
+		t.Fatalf("expected updated_at default to be set")
+	}
+
+	//10.- Validate that duplicate requests per team and requester are rejected by a unique constraint.
+	var constraintName sql.NullString
+	constraintQuery := "SELECT conname FROM pg_constraint WHERE conrelid = 'join_requests'::regclass AND contype = 'u' AND conname = 'join_requests_unique_requester'"
+	if err := db.QueryRowContext(ctx, constraintQuery).Scan(&constraintName); err != nil {
+		t.Fatalf("failed to inspect join_requests unique constraint: %v", err)
+	}
+	if !constraintName.Valid {
+		t.Fatalf("expected join_requests_unique_requester constraint to exist")
 	}
 }
