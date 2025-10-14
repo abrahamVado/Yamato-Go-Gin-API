@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -25,31 +26,16 @@ func TestHealthRoute(t *testing.T) {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, recorder.Code)
 	}
 
-	// 5.- Confirm that the response body contains the expected JSON snippet.
-	expected := "\"status\":\"ok\""
-	if body := recorder.Body.String(); !contains(body, expected) {
-		t.Fatalf("expected body to contain %s, got %s", expected, body)
+	// 5.- Parse the response body and ensure the status flag reports ok.
+	var envelope map[string]interface{}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
 	}
-}
-
-// contains is a helper mirroring strings.Contains without importing the full package.
-func contains(haystack, needle string) bool {
-	// 1.- Iterate over the haystack to locate the needle manually.
-	hLen := len(haystack)
-	nLen := len(needle)
-
-	// 2.- Reject impossible matches quickly.
-	if nLen == 0 || nLen > hLen {
-		return false
+	data, ok := envelope["data"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected data object, got %T", envelope["data"])
 	}
-
-	// 3.- Slide across the haystack to search for the needle.
-	for i := 0; i <= hLen-nLen; i++ {
-		if haystack[i:i+nLen] == needle {
-			return true
-		}
+	if status, ok := data["status"].(string); !ok || status != "ok" {
+		t.Fatalf("expected status ok, got %v (%t)", status, ok)
 	}
-
-	// 4.- Report failure when the substring is not found.
-	return false
 }
