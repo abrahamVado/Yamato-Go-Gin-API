@@ -5,13 +5,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/example/Yamato-Go-Gin-API/app/http/controllers"
+	"github.com/example/Yamato-Go-Gin-API/internal/http/diagnostics"
 )
 
 // RegisterRoutes maps HTTP endpoints to their handlers.
 func RegisterRoutes(router *gin.Engine) {
-	// 1.- Create controller instances that will serve route handlers.
-	healthController := controllers.NewHealthController()
+	// 1.- Prepare diagnostics handlers responsible for service monitoring.
+	diagHandler := diagnostics.NewHandler("Yamato API")
 
 	// 2.- Define a root route returning a welcome message.
 	router.GET("/", func(ctx *gin.Context) {
@@ -23,5 +23,8 @@ func RegisterRoutes(router *gin.Engine) {
 	api := router.Group("/api")
 
 	// 4.- Register a health check endpoint for monitoring purposes.
-	api.GET("/health", healthController.Status)
+	api.GET("/health", diagHandler.Health)
+
+	// 5.- Expose a readiness probe used by orchestrators to gate traffic.
+	router.GET("/ready", diagHandler.Ready)
 }
