@@ -1,0 +1,9 @@
+CREATE TABLE IF NOT EXISTS team_members (
+    team_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    role VARCHAR(100) NOT NULL DEFAULT 'member',
+    joined_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT TIMEZONE('UTC', NOW()),
+    PRIMARY KEY (team_id, user_id),
+    FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
