@@ -1,0 +1,213 @@
+openapi: 3.0.3
+info:
+  title: The Yamato API
+  version: 1.0.0
+  description: |
+    Canonical reference for the Yamato REST API v1 covering health monitoring and
+    shared payload envelopes. Success and error bodies follow ADR-003 to ensure
+    uniform metadata and validation reporting.
+  license:
+    name: MIT
+    url: https://opensource.org/license/mit/
+servers:
+  - url: /api
+    description: Primary application gateway exposing version 1 endpoints.
+tags:
+  - name: Health
+    description: Service availability and monitoring endpoints.
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Retrieve API health status
+      operationId: getHealthStatus
+      description: |
+        Returns a lightweight heartbeat payload indicating the service availability
+        and product label. The endpoint mirrors the handler defined in
+        `routes/web.go` and does not require authentication.
+      security: []
+      responses:
+        '200':
+          description: Service is responsive and operating nominally.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponseEnvelope'
+              examples:
+                healthy:
+                  summary: Normal operation
+                  value:
+                    data:
+                      status: ok
+                      service: Yamato API
+                    meta: {}
+        '429':
+          $ref: '#/components/responses/StandardError'
+        '500':
+          $ref: '#/components/responses/StandardError'
+components:
+  securitySchemes:
+    AccessToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Standard bearer token issued by the Yamato authentication service. Access
+        tokens are short lived (≈15 minutes) and include claims such as `sub`,
+        `iss`, `aud`, `exp`, `iat`, and a rotation counter according to ADR-001.
+    RefreshToken:
+      type: apiKey
+      in: header
+      name: X-Refresh-Token
+      description: |
+        Opaque, single-use identifier representing the refresh token stored in
+        Redis. Refresh requests must supply both the active access token and the
+        latest refresh token. Successful exchanges invalidate the previous refresh
+        identifier and return a rotated pair.
+  schemas:
+    SuccessEnvelope:
+      type: object
+      required:
+        - data
+        - meta
+      properties:
+        data:
+          description: Domain payload returned by the operation.
+        meta:
+          $ref: '#/components/schemas/Meta'
+      description: Canonical structure for successful responses.
+    Meta:
+      type: object
+      properties:
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+          description: Pagination details when the response includes a collection.
+      additionalProperties: true
+      description: Container for non-resource metadata accompanying responses.
+    Pagination:
+      type: object
+      required:
+        - page
+        - per_page
+        - total_pages
+        - total_records
+        - has_next
+        - has_prev
+      properties:
+        page:
+          type: integer
+          format: int32
+          minimum: 1
+          description: Current page index (1-based).
+        per_page:
+          type: integer
+          format: int32
+          minimum: 1
+          description: Number of records requested per page.
+        total_pages:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Total number of pages available.
+        total_records:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Total number of records matching the query.
+        has_next:
+          type: boolean
+          description: Indicates whether a subsequent page exists.
+        has_prev:
+          type: boolean
+          description: Indicates whether a previous page exists.
+      description: Pagination metadata injected into collection responses.
+    ErrorResponse:
+      type: object
+      required:
+        - message
+        - errors
+      properties:
+        message:
+          type: string
+          description: Localized, human-readable summary of the failure.
+        errors:
+          type: object
+          properties:
+            validation:
+              $ref: '#/components/schemas/ValidationErrorMap'
+          additionalProperties:
+            $ref: '#/components/schemas/ErrorList'
+          description: Namespaced error details keyed by category (validation, auth).
+      description: Canonical failure envelope returned by API endpoints.
+    ErrorList:
+      type: array
+      items:
+        $ref: '#/components/schemas/ErrorDetail'
+      description: Ordered collection of error descriptors for a category.
+    ErrorDetail:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: Machine-readable error identifier (e.g., `required`).
+        message:
+          type: string
+          description: Localized explanation suitable for display to end users.
+        meta:
+          type: object
+          additionalProperties: true
+          description: Optional structured context for the error instance.
+      description: Detailed description for a specific error condition.
+    ValidationErrorMap:
+      type: object
+      additionalProperties:
+        type: array
+        items:
+          $ref: '#/components/schemas/ErrorDetail'
+      description: Mapping of field paths to validation issues.
+    HealthResponseEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/SuccessEnvelope'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/HealthStatus'
+          required:
+            - data
+      description: Successful health response body.
+    HealthStatus:
+      type: object
+      required:
+        - status
+        - service
+      properties:
+        status:
+          type: string
+          example: ok
+          description: Single-word heartbeat indicator.
+        service:
+          type: string
+          example: Yamato API
+          description: Human-readable label for the running service instance.
+      description: Payload returned by the health endpoint.
+  responses:
+    StandardError:
+      description: Canonical error payload used across endpoints.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            errorExample:
+              summary: Generic error envelope
+              value:
+                message: Something went wrong.
+                errors:
+                  internal:
+                    - code: internal_server_error
+                      message: Unexpected error occurred.
+                      meta: {}
