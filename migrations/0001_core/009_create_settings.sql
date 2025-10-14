@@ -1,0 +1,12 @@
+CREATE TABLE IF NOT EXISTS settings (
+    id BIGSERIAL PRIMARY KEY,
+    key VARCHAR(150) NOT NULL UNIQUE,
+    value JSONB NOT NULL,
+    description TEXT,
+    module_id BIGINT REFERENCES modules(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT TIMEZONE('UTC', NOW()),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT TIMEZONE('UTC', NOW()),
+    deleted_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX IF NOT EXISTS idx_settings_deleted_at ON settings (deleted_at);
