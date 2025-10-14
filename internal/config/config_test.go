@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-//1.- unsetEnv removes an environment variable for the duration of the test.
+// 1.- unsetEnv removes an environment variable for the duration of the test.
 func unsetEnv(t *testing.T, key string) {
 	t.Helper()
 	prev, existed := os.LookupEnv(key)
@@ -21,7 +21,7 @@ func unsetEnv(t *testing.T, key string) {
 	}
 }
 
-//1.- TestLoadUsesEnvFile ensures .env values populate the configuration.
+// 1.- TestLoadUsesEnvFile ensures .env values populate the configuration.
 func TestLoadUsesEnvFile(t *testing.T) {
 	unsetEnv(t, "JWT_SECRET")
 	dir := t.TempDir()
@@ -88,7 +88,7 @@ func TestLoadUsesEnvFile(t *testing.T) {
 	}
 }
 
-//1.- TestLoadEnvironmentOverrides verifies environment variables take priority over .env values.
+// 1.- TestLoadEnvironmentOverrides verifies environment variables take priority over .env values.
 func TestLoadEnvironmentOverrides(t *testing.T) {
 	dir := t.TempDir()
 	envPath := filepath.Join(dir, ".env")
@@ -120,7 +120,7 @@ func TestLoadEnvironmentOverrides(t *testing.T) {
 	}
 }
 
-//1.- TestLoadMissingEnvFile ensures defaults work when no file is present.
+// 1.- TestLoadMissingEnvFile ensures defaults work when no file is present.
 func TestLoadMissingEnvFile(t *testing.T) {
 	t.Setenv("JWT_SECRET", "only-env")
 	cfg, err := Load(filepath.Join(t.TempDir(), "missing.env"))
@@ -132,5 +132,33 @@ func TestLoadMissingEnvFile(t *testing.T) {
 	}
 	if cfg.Redis.Port != 6379 {
 		t.Fatalf("expected default redis port 6379, got %d", cfg.Redis.Port)
+	}
+}
+
+// 1.- TestLoadRateLimitFromEnvironment ensures rate limit knobs respect environment overrides.
+func TestLoadRateLimitFromEnvironment(t *testing.T) {
+	//1.- Guarantee required configuration such as JWT secret is present.
+	t.Setenv("JWT_SECRET", "rl-secret")
+
+	//1.- Provide explicit rate limit overrides via environment variables.
+	t.Setenv("RATE_LIMIT_REQUESTS", "250")
+	t.Setenv("RATE_LIMIT_DURATION", "30s")
+	t.Setenv("RATE_LIMIT_BURST", "80")
+
+	//1.- Load configuration without an env file so only environment variables apply.
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.env"))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	//1.- Validate that rate limiter parameters match the provided environment overrides.
+	if cfg.Rate.Requests != 250 {
+		t.Fatalf("expected rate requests 250, got %d", cfg.Rate.Requests)
+	}
+	if cfg.Rate.Duration != 30*time.Second {
+		t.Fatalf("expected rate duration 30s, got %v", cfg.Rate.Duration)
+	}
+	if cfg.Rate.Burst != 80 {
+		t.Fatalf("expected rate burst 80, got %d", cfg.Rate.Burst)
 	}
 }
