@@ -150,6 +150,7 @@ func TestLoadRateLimitFromEnvironment(t *testing.T) {
 	t.Setenv("RATE_LIMIT_REQUESTS", "250")
 	t.Setenv("RATE_LIMIT_DURATION", "30s")
 	t.Setenv("RATE_LIMIT_BURST", "80")
+	t.Setenv("RATE_LIMIT_SETTINGS_KEY", "rate.settings.custom")
 
 	//1.- Load configuration without an env file so only environment variables apply.
 	cfg, err := Load(filepath.Join(t.TempDir(), "absent.env"))
@@ -166,5 +167,8 @@ func TestLoadRateLimitFromEnvironment(t *testing.T) {
 	}
 	if cfg.Rate.Burst != 80 {
 		t.Fatalf("expected rate burst 80, got %d", cfg.Rate.Burst)
+	}
+	if cfg.Rate.SettingsKey != "rate.settings.custom" {
+		t.Fatalf("expected settings key override, got %q", cfg.Rate.SettingsKey)
 	}
 }
