@@ -1,0 +1,13 @@
+{
+  "validation": {
+    "required": "This field is required.",
+    "email": "Please enter a valid email address.",
+    "min_length": "This field must meet the minimum length requirement."
+  },
+  "response": {
+    "success": "Operation completed successfully.",
+    "created": "Resource created successfully.",
+    "pending": "Your request is pending review.",
+    "error": "An unexpected error occurred."
+  }
+}

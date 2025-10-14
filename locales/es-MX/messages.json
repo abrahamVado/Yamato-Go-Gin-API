@@ -1,0 +1,12 @@
+{
+  "validation": {
+    "required": "Este campo es obligatorio.",
+    "email": "Por favor, ingresa una dirección de correo válida.",
+    "min_length": "Este campo debe cumplir con la longitud mínima."
+  },
+  "response": {
+    "success": "Operación completada con éxito.",
+    "created": "Recurso creado correctamente.",
+    "error": "Ocurrió un error inesperado."
+  }
+}
