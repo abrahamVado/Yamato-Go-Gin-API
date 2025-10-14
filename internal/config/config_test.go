@@ -134,3 +134,21 @@ func TestLoadMissingEnvFile(t *testing.T) {
 		t.Fatalf("expected default redis port 6379, got %d", cfg.Redis.Port)
 	}
 }
+
+//1.- TestLoadWithoutJWTSecretFails ensures the loader enforces a required JWT secret.
+func TestLoadWithoutJWTSecretFails(t *testing.T) {
+	//1.- Create an env file without the JWT secret to simulate misconfiguration.
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, ".env")
+	envContent := "JWT_ISSUER=missing-secret-service\n"
+	if err := os.WriteFile(envPath, []byte(envContent), 0o600); err != nil {
+		t.Fatalf("failed to write env file: %v", err)
+	}
+
+	unsetEnv(t, "JWT_SECRET")
+
+	//1.- Attempting to load should return an error because the secret is mandatory.
+	if _, err := Load(envPath); err == nil {
+		t.Fatal("expected Load to fail when JWT secret is absent")
+	}
+}
