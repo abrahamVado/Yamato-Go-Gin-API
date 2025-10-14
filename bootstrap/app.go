@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/example/Yamato-Go-Gin-API/config"
+	"github.com/example/Yamato-Go-Gin-API/internal/middleware"
 	"github.com/example/Yamato-Go-Gin-API/routes"
 )
 
@@ -17,12 +18,15 @@ func SetupRouter() (*gin.Engine, config.AppConfig) {
 	// 2.- Create a new Gin router with default middleware settings.
 	router := gin.Default()
 
-	// 3.- Register HTTP routes used by the application.
+	// 3.- Register custom middleware responsible for consistent error responses.
+	router.Use(middleware.ErrorHandler())
+
+	// 4.- Register HTTP routes used by the application.
 	routes.RegisterRoutes(router)
 
-	// 4.- Display a startup message with application information.
+	// 5.- Display a startup message with application information.
 	fmt.Printf("Starting %s on port %s\n", appConfig.Name, appConfig.Port)
 
-	// 5.- Return the prepared router and configuration for further usage.
+	// 6.- Return the prepared router and configuration for further usage.
 	return router, appConfig
 }
