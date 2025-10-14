@@ -53,6 +53,12 @@ func TestLoadUsesEnvFile(t *testing.T) {
 	if cfg.JWT.Expiration != 2*time.Hour {
 		t.Fatalf("unexpected jwt expiration: %v", cfg.JWT.Expiration)
 	}
+	if cfg.JWT.AccessExpiration != 15*time.Minute {
+		t.Fatalf("unexpected access expiration: %v", cfg.JWT.AccessExpiration)
+	}
+	if cfg.JWT.RefreshExpiration != 30*24*time.Hour {
+		t.Fatalf("unexpected refresh expiration: %v", cfg.JWT.RefreshExpiration)
+	}
 	if !cfg.Redis.TLS {
 		t.Fatalf("expected redis TLS true")
 	}

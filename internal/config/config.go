@@ -24,10 +24,12 @@ type Config struct {
 
 //1.- JWTConfig stores token-related configuration.
 type JWTConfig struct {
-	Secret     string
-	Issuer     string
-	Audience   string
-	Expiration time.Duration
+	Secret            string
+	Issuer            string
+	Audience          string
+	Expiration        time.Duration
+	AccessExpiration  time.Duration
+	RefreshExpiration time.Duration
 }
 
 //1.- RedisConfig stores cache connection parameters.
@@ -100,10 +102,12 @@ func Load(path string) (Config, error) {
         //1.- Assemble the final configuration struct by querying helpers.
 	cfg := Config{
 		JWT: JWTConfig{
-			Secret:     getString("JWT_SECRET", envMap, ""),
-			Issuer:     getString("JWT_ISSUER", envMap, ""),
-			Audience:   getString("JWT_AUDIENCE", envMap, ""),
-			Expiration: getDuration("JWT_EXPIRATION", envMap, time.Hour*24),
+			Secret:            getString("JWT_SECRET", envMap, ""),
+			Issuer:            getString("JWT_ISSUER", envMap, ""),
+			Audience:          getString("JWT_AUDIENCE", envMap, ""),
+			Expiration:        getDuration("JWT_EXPIRATION", envMap, time.Hour*24),
+			AccessExpiration:  getDuration("JWT_ACCESS_EXPIRATION", envMap, 15*time.Minute),
+			RefreshExpiration: getDuration("JWT_REFRESH_EXPIRATION", envMap, 30*24*time.Hour),
 		},
 		Redis: RedisConfig{
 			Host:     getString("REDIS_HOST", envMap, "127.0.0.1"),
