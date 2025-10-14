@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/example/Yamato-Go-Gin-API/internal/http/respond"
 )
 
 // 1.- DBPinger captures the contract required for database connectivity checks.
@@ -111,18 +113,6 @@ type readinessData struct {
 	Checks map[string]componentStatus `json:"checks"`
 }
 
-// 1.- successEnvelope mirrors ADR-003 success payload layout.
-type successEnvelope struct {
-	Data interface{}    `json:"data"`
-	Meta map[string]any `json:"meta"`
-}
-
-// 1.- errorEnvelope mirrors ADR-003 error payload layout.
-type errorEnvelope struct {
-	Message string                 `json:"message"`
-	Errors  map[string]interface{} `json:"errors"`
-}
-
 // 1.- Health reports service availability and dependency health.
 func (h Handler) Health(ctx *gin.Context) {
 	// 1.- Apply rate limiting prior to executing expensive dependency checks.
@@ -150,12 +140,12 @@ func (h Handler) Health(ctx *gin.Context) {
 
 	// 5.- Respond using the canonical success envelope when healthy.
 	if statusCode == http.StatusOK {
-		ctx.JSON(statusCode, successEnvelope{Data: healthData{Status: overall, Service: h.service, Checks: checks}, Meta: map[string]any{}})
+		respond.Success(ctx, statusCode, healthData{Status: overall, Service: h.service, Checks: checks}, map[string]interface{}{})
 		return
 	}
 
 	// 6.- Return a structured error response when dependencies fail.
-	ctx.JSON(statusCode, errorEnvelope{Message: "health check failed", Errors: map[string]interface{}{"checks": h.collectErrors(checks)}})
+	respond.Error(ctx, statusCode, "health check failed", map[string]interface{}{"checks": h.collectErrors(checks)})
 }
 
 // 1.- Ready exposes a lightweight readiness signal for load balancers.
@@ -180,12 +170,12 @@ func (h Handler) Ready(ctx *gin.Context) {
 	statusCode := http.StatusOK
 	if !ready {
 		statusCode = http.StatusServiceUnavailable
-		ctx.JSON(statusCode, errorEnvelope{Message: "service not ready", Errors: map[string]interface{}{"checks": h.collectErrors(checks)}})
+		respond.Error(ctx, statusCode, "service not ready", map[string]interface{}{"checks": h.collectErrors(checks)})
 		return
 	}
 
 	// 5.- Deliver a compact success payload when the service is ready.
-	ctx.JSON(statusCode, successEnvelope{Data: readinessData{Ready: true, Checks: checks}, Meta: map[string]any{}})
+	respond.Success(ctx, statusCode, readinessData{Ready: true, Checks: checks}, map[string]interface{}{})
 }
 
 // 1.- applyRateLimit checks the limiter and renders failures consistently.
@@ -198,7 +188,7 @@ func (h Handler) applyRateLimit(ctx *gin.Context, scope string) bool {
 	// 2.- Evaluate whether the current request may proceed.
 	result, err := h.limiter.Allow(ctx.Request.Context(), h.rateLimitKey(ctx, scope))
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, errorEnvelope{Message: "rate limit failure", Errors: map[string]interface{}{"rate_limit": err.Error()}})
+		respond.InternalError(ctx, err)
 		return false
 	}
 
@@ -211,7 +201,7 @@ func (h Handler) applyRateLimit(ctx *gin.Context, scope string) bool {
 			}
 			ctx.Header("Retry-After", strconv.Itoa(seconds))
 		}
-		ctx.JSON(http.StatusTooManyRequests, errorEnvelope{Message: "too many requests", Errors: map[string]interface{}{"rate_limit": "diagnostics quota exceeded"}})
+		respond.Error(ctx, http.StatusTooManyRequests, "too many requests", map[string]interface{}{"rate_limit": "diagnostics quota exceeded"})
 		return false
 	}
 

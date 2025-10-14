@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/example/Yamato-Go-Gin-API/internal/middleware"
 )
 
 // 1.- TestHealthSuccess verifies that the health endpoint returns a healthy payload when dependencies pass.
@@ -24,12 +26,13 @@ func TestHealthSuccess(t *testing.T) {
 
 	// 3.- Create a synthetic HTTP context invoking the health handler.
 	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
+	router := gin.New()
+	router.Use(middleware.ErrorHandler())
+	router.GET("/api/health", handler.Health)
 	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
-	ctx.Request = req
 
 	// 4.- Execute the handler and capture the emitted response.
-	handler.Health(ctx)
+	router.ServeHTTP(recorder, req)
 
 	// 5.- Assert that the response status code indicates success.
 	if recorder.Code != http.StatusOK {
@@ -37,15 +40,18 @@ func TestHealthSuccess(t *testing.T) {
 	}
 
 	// 6.- Decode the JSON payload for field-level assertions.
-	var envelope successEnvelope
+	var envelope map[string]interface{}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
 	// 7.- Validate that the data field reports the expected component health.
-	data, ok := envelope.Data.(map[string]interface{})
+	if envelope["status"] != "success" {
+		t.Fatalf("expected envelope status success, got %v", envelope["status"])
+	}
+	data, ok := envelope["data"].(map[string]interface{})
 	if !ok {
-		t.Fatalf("expected data to be a map, got %T", envelope.Data)
+		t.Fatalf("expected data to be a map, got %T", envelope["data"])
 	}
 	checks, ok := data["checks"].(map[string]interface{})
 	if !ok {
@@ -69,11 +75,13 @@ func TestHealthFailurePropagatesError(t *testing.T) {
 
 	// 2.- Arrange the Gin test context targeting the health route.
 	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	router := gin.New()
+	router.Use(middleware.ErrorHandler())
+	router.GET("/api/health", handler.Health)
+	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 
 	// 3.- Execute the handler and capture the degraded response.
-	handler.Health(ctx)
+	router.ServeHTTP(recorder, req)
 
 	// 4.- Expect a 503 status indicating dependency failure.
 	if recorder.Code != http.StatusServiceUnavailable {
@@ -81,15 +89,22 @@ func TestHealthFailurePropagatesError(t *testing.T) {
 	}
 
 	// 5.- Decode the error envelope to confirm the failure is reported.
-	var envelope errorEnvelope
+	var envelope map[string]interface{}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("failed to decode error response: %v", err)
 	}
 
 	// 6.- Validate that the error payload references the database outage.
-	checks, ok := envelope.Errors["checks"].(map[string]interface{})
+	if envelope["status"] != "error" {
+		t.Fatalf("expected envelope status error, got %v", envelope["status"])
+	}
+	errorsField, ok := envelope["errors"].(map[string]interface{})
 	if !ok {
-		t.Fatalf("expected checks error map, got %T", envelope.Errors["checks"])
+		t.Fatalf("expected errors to be a map, got %T", envelope["errors"])
+	}
+	checks, ok := errorsField["checks"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected checks error map, got %T", errorsField["checks"])
 	}
 	if msg, ok := checks["database"].(string); !ok || msg != expectedErr.Error() {
 		t.Fatalf("expected database error %q, got %v (%t)", expectedErr.Error(), msg, ok)
@@ -104,11 +119,13 @@ func TestReadyReflectsDependencyStatus(t *testing.T) {
 
 	// 2.- Invoke the readiness endpoint using a Gin test context.
 	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/ready", nil)
+	router := gin.New()
+	router.Use(middleware.ErrorHandler())
+	router.GET("/ready", handler.Ready)
+	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
 
 	// 3.- Execute the handler and confirm the failure response.
-	handler.Ready(ctx)
+	router.ServeHTTP(recorder, req)
 
 	// 4.- Expect the readiness probe to return a service unavailable status.
 	if recorder.Code != http.StatusServiceUnavailable {
@@ -116,13 +133,20 @@ func TestReadyReflectsDependencyStatus(t *testing.T) {
 	}
 
 	// 5.- Parse the error envelope to confirm the Redis outage was surfaced.
-	var envelope errorEnvelope
+	var envelope map[string]interface{}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
 		t.Fatalf("failed to decode error response: %v", err)
 	}
-	checks, ok := envelope.Errors["checks"].(map[string]interface{})
+	if envelope["status"] != "error" {
+		t.Fatalf("expected envelope status error, got %v", envelope["status"])
+	}
+	errorsField, ok := envelope["errors"].(map[string]interface{})
 	if !ok {
-		t.Fatalf("expected checks error map, got %T", envelope.Errors["checks"])
+		t.Fatalf("expected errors to be a map, got %T", envelope["errors"])
+	}
+	checks, ok := errorsField["checks"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected checks error map, got %T", errorsField["checks"])
 	}
 	if msg, ok := checks["redis"].(string); !ok || msg != cache.err.Error() {
 		t.Fatalf("expected redis error %q, got %v (%t)", cache.err.Error(), msg, ok)
@@ -137,11 +161,13 @@ func TestRateLimitFailure(t *testing.T) {
 
 	// 2.- Invoke the health endpoint under rate-limited conditions.
 	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	router := gin.New()
+	router.Use(middleware.ErrorHandler())
+	router.GET("/api/health", handler.Health)
+	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 
 	// 3.- Execute the handler, expecting a throttled response.
-	handler.Health(ctx)
+	router.ServeHTTP(recorder, req)
 
 	// 4.- Ensure a 429 status is returned when the limiter rejects the call.
 	if recorder.Code != http.StatusTooManyRequests {
