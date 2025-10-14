@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/example/Yamato-Go-Gin-API/internal/http/respond"
+	"github.com/example/Yamato-Go-Gin-API/internal/observability"
 )
 
 const requestIDHeader = "X-Request-ID"
@@ -57,7 +58,12 @@ func RequestID() gin.HandlerFunc {
 		ctx.Writer.Header().Set(requestIDHeader, requestID)
 		ctx.Set("request_id", requestID)
 
-		// 4.- Continue processing downstream middleware and handlers.
+		// 4.- Mirror the request ID into the standard context so observability packages can correlate events.
+		if ctx.Request != nil {
+			ctx.Request = ctx.Request.WithContext(observability.ContextWithRequestID(ctx.Request.Context(), requestID))
+		}
+
+		// 5.- Continue processing downstream middleware and handlers.
 		ctx.Next()
 	}
 }
