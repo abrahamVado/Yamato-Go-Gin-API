@@ -1,0 +1,3 @@
+# Ignore binaries compiled by Docker builds or local development.
+/api
+/worker
