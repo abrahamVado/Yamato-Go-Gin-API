@@ -47,7 +47,7 @@ func NewLogger(cfg LoggerConfig) (*zap.Logger, error) {
 	// 4.- Enrich every log entry with the service label for correlation across components.
 	service := strings.TrimSpace(cfg.Service)
 	if service == "" {
-		service = "Yamato API"
+		service = "Larago API"
 	}
 	if zapCfg.InitialFields == nil {
 		zapCfg.InitialFields = map[string]interface{}{}

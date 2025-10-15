@@ -33,12 +33,12 @@ func RegisterRoutes(router *gin.Engine, opts ...Option) {
 	}
 
 	// 2.- Prepare diagnostics handlers responsible for service monitoring.
-	diagHandler := diagnostics.NewHandler("Yamato API")
+	diagHandler := diagnostics.NewHandler("Larago API")
 
 	// 3.- Define a root route returning a welcome message.
 	router.GET("/", func(ctx *gin.Context) {
 		// 1.- Respond with a plain text message similar to Laravel's welcome route.
-		ctx.String(http.StatusOK, "Welcome to the Yamato Go Gin API")
+		ctx.String(http.StatusOK, "Welcome to the Larago API")
 	})
 
 	// 4.- Group API routes under the /api prefix.

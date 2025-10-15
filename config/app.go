@@ -12,7 +12,7 @@ type AppConfig struct {
 func LoadAppConfig() AppConfig {
 	// 1.- Provide sensible defaults for configuration values.
 	config := AppConfig{
-		Name: "Yamato API",
+		Name: "Larago API",
 		Port: "8080",
 	}
 
