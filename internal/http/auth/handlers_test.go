@@ -25,6 +25,26 @@ type memoryUserStore struct {
 	byEmail map[string]string
 }
 
+// 1.- stubVerificationService records verification and resend calls for assertions.
+type stubVerificationService struct {
+	verifyCalls [][2]string
+	resendCalls []string
+	verifyErr   error
+	resendErr   error
+}
+
+// 1.- Verify records the call and returns the configured error.
+func (s *stubVerificationService) Verify(_ context.Context, userID string, hash string) error {
+	s.verifyCalls = append(s.verifyCalls, [2]string{userID, hash})
+	return s.verifyErr
+}
+
+// 1.- Resend records the subject and returns the configured error.
+func (s *stubVerificationService) Resend(_ context.Context, userID string) error {
+	s.resendCalls = append(s.resendCalls, userID)
+	return s.resendErr
+}
+
 // 1.- newMemoryUserStore constructs a thread-safe in-memory repository.
 func newMemoryUserStore() *memoryUserStore {
 	return &memoryUserStore{users: map[string]User{}, byEmail: map[string]string{}}
@@ -51,7 +71,7 @@ func (m *memoryUserStore) FindByEmail(_ context.Context, email string) (User, er
 }
 
 // 1.- setupHandler constructs a handler with real token service dependencies.
-func setupHandler(t *testing.T) (Handler, *memoryUserStore, func()) {
+func setupHandler(t *testing.T) (Handler, *memoryUserStore, *stubVerificationService, func()) {
 	gin.SetMode(gin.TestMode)
 
 	// 2.- Boot an in-memory Redis instance for token workflows.
@@ -71,13 +91,14 @@ func setupHandler(t *testing.T) (Handler, *memoryUserStore, func()) {
 	require.NoError(t, err)
 
 	store := newMemoryUserStore()
-	handler := NewHandler(svc, store)
+	verifier := &stubVerificationService{}
+	handler := NewHandler(svc, store, verifier)
 	cleanup := func() {
 		_ = client.Close()
 		mini.Close()
 	}
 
-	return handler, store, cleanup
+	return handler, store, verifier, cleanup
 }
 
 // 1.- successPayload generically decodes success envelopes in tests.
@@ -88,7 +109,7 @@ type successPayload[T any] struct {
 
 // 1.- TestRegisterLoginRefreshLogoutFlow covers the complete authentication lifecycle.
 func TestRegisterLoginRefreshLogoutFlow(t *testing.T) {
-	handler, _, cleanup := setupHandler(t)
+	handler, _, _, cleanup := setupHandler(t)
 	defer cleanup()
 
 	// 2.- Exercise the registration endpoint.
@@ -168,7 +189,7 @@ func TestRegisterLoginRefreshLogoutFlow(t *testing.T) {
 
 // 1.- TestCurrentUserEndpoint returns the principal envelope when context is populated.
 func TestCurrentUserEndpoint(t *testing.T) {
-	handler, _, cleanup := setupHandler(t)
+	handler, _, _, cleanup := setupHandler(t)
 	defer cleanup()
 
 	recorder := httptest.NewRecorder()
@@ -194,7 +215,7 @@ func TestCurrentUserEndpoint(t *testing.T) {
 
 // 1.- TestCurrentUserUnauthorized ensures missing principals trigger an error envelope.
 func TestCurrentUserUnauthorized(t *testing.T) {
-	handler, _, cleanup := setupHandler(t)
+	handler, _, _, cleanup := setupHandler(t)
 	defer cleanup()
 
 	recorder := httptest.NewRecorder()
@@ -208,4 +229,119 @@ func TestCurrentUserUnauthorized(t *testing.T) {
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
 	require.NotEmpty(t, body.Message)
 	require.NotNil(t, body.Errors)
+}
+
+// 1.- TestVerifyEmailHappyPath ensures verification delegates to the service and returns success.
+func TestVerifyEmailHappyPath(t *testing.T) {
+	handler, _, verifier, cleanup := setupHandler(t)
+	defer cleanup()
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/email/verify/123/hash-value", nil)
+	ctx.Params = gin.Params{{Key: "id", Value: "123"}, {Key: "hash", Value: "hash-value"}}
+
+	handler.VerifyEmail(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Len(t, verifier.verifyCalls, 1)
+	require.Equal(t, [2]string{"123", "hash-value"}, verifier.verifyCalls[0])
+
+	var body successPayload[map[string]bool]
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+	require.True(t, body.Data["verified"])
+}
+
+// 1.- TestVerifyEmailValidationError returns a bad request when parameters are missing.
+func TestVerifyEmailValidationError(t *testing.T) {
+	handler, _, _, cleanup := setupHandler(t)
+	defer cleanup()
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/email/verify//", nil)
+
+	handler.VerifyEmail(ctx)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+
+	var body errorEnvelope
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+	require.Equal(t, "invalid verification link", body.Message)
+}
+
+// 1.- TestVerifyEmailInvalidHash maps service errors to a 400 response.
+func TestVerifyEmailInvalidHash(t *testing.T) {
+	handler, _, verifier, cleanup := setupHandler(t)
+	defer cleanup()
+
+	verifier.verifyErr = ErrInvalidVerification
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/email/verify/123/hash-value", nil)
+	ctx.Params = gin.Params{{Key: "id", Value: "123"}, {Key: "hash", Value: "hash-value"}}
+
+	handler.VerifyEmail(ctx)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+
+	var body errorEnvelope
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+	require.Equal(t, "invalid verification link", body.Message)
+}
+
+// 1.- TestResendVerificationRequiresPrincipal returns unauthorized when no subject exists.
+func TestResendVerificationRequiresPrincipal(t *testing.T) {
+	handler, _, _, cleanup := setupHandler(t)
+	defer cleanup()
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/email/verification-notification", nil)
+
+	handler.ResendVerification(ctx)
+
+	require.Equal(t, http.StatusUnauthorized, recorder.Code)
+}
+
+// 1.- TestResendVerificationThrottled surfaces throttling information with HTTP 429.
+func TestResendVerificationThrottled(t *testing.T) {
+	handler, _, verifier, cleanup := setupHandler(t)
+	defer cleanup()
+
+	verifier.resendErr = ErrVerificationThrottled
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/email/verification-notification", nil)
+	internalauth.SetPrincipal(ctx, internalauth.Principal{Subject: "user-123"})
+
+	handler.ResendVerification(ctx)
+
+	require.Equal(t, http.StatusTooManyRequests, recorder.Code)
+
+	var body errorEnvelope
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+	require.Equal(t, "verification resend throttled", body.Message)
+}
+
+// 1.- TestResendVerificationSuccess triggers the resend workflow successfully.
+func TestResendVerificationSuccess(t *testing.T) {
+	handler, _, verifier, cleanup := setupHandler(t)
+	defer cleanup()
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/email/verification-notification", nil)
+	internalauth.SetPrincipal(ctx, internalauth.Principal{Subject: "user-123"})
+
+	handler.ResendVerification(ctx)
+
+	require.Equal(t, http.StatusAccepted, recorder.Code)
+	require.Equal(t, []string{"user-123"}, verifier.resendCalls)
+
+	var body successPayload[map[string]bool]
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+	require.True(t, body.Data["resent"])
 }
