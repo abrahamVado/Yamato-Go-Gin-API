@@ -1,51 +1,50 @@
 # Health and Readiness Endpoints
 
 ## Summary
-The diagnostics handler defined in `internal/http/diagnostics/handlers.go` exposes two probe endpoints: `/api/health` for deep health checks and `/ready` for lightweight readiness reporting. Both routes are registered in `routes/web.go` and are publicly accessible in the development bootstrap.
+The production health check reports service availability and dependency status by delegating to the diagnostics handler defined in `internal/http/diagnostics/handlers.go`. The route returns a structured success envelope emitted by `respond.Success` when all checks pass, and surfaces dependency errors when they fail.
 
-## Routes
-- **GET `/api/health`** – Executes optional database and Redis checks, returning detailed component status inside the canonical success envelope.
-- **GET `/ready`** – Evaluates the same checks to decide whether the service is ready to accept traffic. Failures return an error envelope with component diagnostics.
+## Route
+- **Method:** `GET`
+- **Path:** `/api/health`
+- **Authentication:** Not required (the route is part of the unauthenticated `/api` group).
+- **Rate limiting:** Requests can be throttled if a limiter is injected via `diagnostics.WithRateLimiter`; the default `NoopLimiter` allows all traffic.
 
-## Response Schemas
-### GET `/api/health`
-```json
-{
-  "status": "success",
-  "data": {
-    "status": "ok",
-    "service": "Larago API",
-    "checks": {
-      "database": { "status": "skipped" },
-      "redis": { "status": "skipped" }
-    }
-  },
-  "meta": {}
-}
-```
-- The `status` field inside `data` resolves to `"ok"` when all configured dependencies respond without error; otherwise it becomes `"error"` and the HTTP status changes to `503`.
-- Dependency entries include an `error` property when failures occur.
+## Success Response
+- **Status:** `200 OK`
+- **Body:**
+  ```json
+  {
+    "status": "success",
+    "data": {
+      "status": "ok",
+      "service": "Larago API",
+      "checks": {
+        "database": {
+          "status": "skipped"
+        },
+        "redis": {
+          "status": "skipped"
+        }
+      }
+    },
+    "meta": {}
+  }
+  ```
 
-### GET `/ready`
-Successful responses mirror the health payload but replace `data` with:
-```json
-{
-  "status": "success",
-  "data": {
-    "ready": true,
-    "checks": {
-      "database": { "status": "skipped" },
-      "redis": { "status": "skipped" }
-    }
-  },
-  "meta": {}
-}
-```
-- When any dependency check reports `error`, the handler responds with HTTP `503` and an error envelope produced by `respond.Error` containing the failing components under `errors.checks`.
+  - `status` is always `success` for healthy responses because the handler uses `respond.Success`.
+  - `data.service` reflects the service label passed to `diagnostics.NewHandler` (defaults to `Larago API`).
+  - `data.checks` lists dependency outcomes (`ok`, `error`, or `skipped` when not configured).
+  - `meta` is an empty object unless callers supply extra metadata.
 
-## Behaviour
-1. `diagnostics.NewHandler` seeds the handler with `NoopLimiter`, ensuring probes remain responsive when rate limiting is not configured.
-2. Each request first passes through `applyRateLimit`; denied requests yield HTTP `429` with a retry hint and the message `"too many requests"`.
-3. Database and Redis checks execute via `checkDatabase` and `checkRedis`. When the dependencies are absent, the handler marks their status as `"skipped"`.
-4. `/api/health` aggregates the check outcomes to derive the HTTP status code and returns the `healthData` struct through `respond.Success`.
-5. `/ready` emits `readinessData` using the same helpers and switches to an error response when any dependency reports `"error"`.
+## Failure Modes
+- When either dependency check fails, the handler responds with `503 Service Unavailable` via `respond.Error`. The payload includes an `errors.checks` object summarizing failure messages.
+- If a rate limiter is configured and rejects the call, the handler returns `429 Too Many Requests`, sets `Retry-After` when provided by the limiter, and emits an error envelope describing the exceeded diagnostics quota.
+
+## Health vs. Readiness
+- `GET /api/health` performs the full dependency evaluation and reports aggregated status using the success envelope described above. Any failing dependency downgrades the HTTP status to `503`.
+- `GET /ready` reuses the same handler but returns a compact success payload (`status: success`, `data.ready: true`) on success. Failures also surface through `respond.Error`. Orchestrators should rely on `/ready` for readiness gating, while `/api/health` is suited for external monitors expecting dependency-level detail.
+
+## Reproduction Checklist
+- Register `diagnostics.NewHandler(...).Health` on the `/api/health` route within the Gin router.
+- Ensure the handler emits the `respond.Success` envelope and dependency checks before reporting success.
+- Propagate rate limiting, database, and Redis dependencies through the handler options when recreating the production behavior.
