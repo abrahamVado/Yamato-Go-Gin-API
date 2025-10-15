@@ -7,7 +7,7 @@ import (
 )
 
 // 1.- RegisterAuthRoutes wires authentication HTTP handlers into the Gin router tree.
-func RegisterAuthRoutes(router gin.IRouter, handler authhttp.Handler) {
+func RegisterAuthRoutes(router gin.IRouter, handler authhttp.Handler, authMiddleware gin.HandlerFunc) {
 	// 2.- Group versioned API routes under the /v1 prefix.
 	v1 := router.Group("/v1")
 
@@ -20,11 +20,18 @@ func RegisterAuthRoutes(router gin.IRouter, handler authhttp.Handler) {
 
 	// 4.- Expose a user endpoint under /v1/user for principal introspection.
 	userGroup := v1.Group("/user")
+	if authMiddleware != nil {
+		userGroup.Use(authMiddleware)
+	}
 	userGroup.GET("", handler.CurrentUser)
 
 	// 5.- Publish Laravel-compatible verification routes outside the versioned prefix.
 	router.GET("/email/verify/:id/:hash", handler.VerifyEmail)
 
 	// 6.- Provide an endpoint to resend verification e-mails for authenticated users.
-	router.POST("/email/verification-notification", handler.ResendVerification)
+	if authMiddleware != nil {
+		router.POST("/email/verification-notification", authMiddleware, handler.ResendVerification)
+	} else {
+		router.POST("/email/verification-notification", handler.ResendVerification)
+	}
 }

@@ -2,11 +2,21 @@ package routes
 
 import (
 	"net/http"
+	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
+	internalauth "github.com/example/Yamato-Go-Gin-API/internal/auth"
+	"github.com/example/Yamato-Go-Gin-API/internal/config"
+	authhttp "github.com/example/Yamato-Go-Gin-API/internal/http/auth"
 	"github.com/example/Yamato-Go-Gin-API/internal/http/diagnostics"
+	notificationshttp "github.com/example/Yamato-Go-Gin-API/internal/http/notifications"
+	taskhttp "github.com/example/Yamato-Go-Gin-API/internal/http/tasks"
+	"github.com/example/Yamato-Go-Gin-API/internal/httpserver"
+	"github.com/example/Yamato-Go-Gin-API/internal/middleware"
 	"github.com/example/Yamato-Go-Gin-API/internal/observability"
+	memoryplatform "github.com/example/Yamato-Go-Gin-API/internal/platform/memory"
 )
 
 // 1.- options captures optional dependencies used while registering routes.
@@ -54,4 +64,50 @@ func RegisterRoutes(router *gin.Engine, opts ...Option) {
 	if configured.metrics != nil {
 		router.GET("/metrics", gin.WrapH(configured.metrics.Handler()))
 	}
+
+	// 8.- Bootstrap in-memory platform services for local development flows.
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = "development-jwt-secret"
+	}
+	jwtIssuer := os.Getenv("JWT_ISSUER")
+	if jwtIssuer == "" {
+		jwtIssuer = "yamato"
+	}
+
+	redis := memoryplatform.NewRedis()
+	authSvc, err := internalauth.NewService(config.JWTConfig{
+		Secret:            jwtSecret,
+		Issuer:            jwtIssuer,
+		AccessExpiration:  15 * time.Minute,
+		RefreshExpiration: 24 * time.Hour,
+	}, redis)
+	if err != nil {
+		panic(err)
+	}
+
+	userStore := memoryplatform.NewUserStore()
+	verificationSvc := memoryplatform.NewVerificationService(userStore, jwtSecret, time.Minute)
+	authHandler := authhttp.NewHandler(authSvc, userStore, verificationSvc)
+	authMiddleware := middleware.Authentication(authSvc, userStore)
+	httpserver.RegisterAuthRoutes(router, authHandler, authMiddleware)
+
+	notificationSvc := memoryplatform.NewNotificationService(memoryplatform.DefaultNotifications())
+	notificationHandler := notificationshttp.NewHandler(notificationSvc)
+
+	taskSvc := memoryplatform.NewTaskService(memoryplatform.DefaultTasks())
+	taskHandler := taskhttp.NewHandler(taskSvc)
+
+	// 9.- Provide an unauthenticated tasks endpoint consumed by the Next.js frontend.
+	api.GET("/tasks", taskHandler.List)
+
+	// 10.- Continue exposing authenticated task and notification endpoints under /v1.
+	protected := router.Group("/v1")
+	protected.Use(authMiddleware)
+	protected.GET("/tasks", taskHandler.List)
+
+	// 11.- Surface notification management endpoints alongside tasks for the dashboard.
+	notificationsGroup := protected.Group("/notifications")
+	notificationsGroup.GET("", notificationHandler.List)
+	notificationsGroup.PATCH(":id", notificationHandler.MarkRead)
 }

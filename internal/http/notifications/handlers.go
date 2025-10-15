@@ -120,7 +120,7 @@ func (h Handler) List(ctx *gin.Context) {
 	// 6.- Deliver the notifications alongside pagination metadata.
 	meta := newMeta()
 	meta["pagination"] = paginationMeta
-	writeSuccess(ctx, http.StatusOK, listing.Items, meta)
+	writeSuccess(ctx, http.StatusOK, map[string]interface{}{"items": listing.Items}, meta)
 }
 
 // 1.- MarkRead marks a notification as read for the authenticated user.

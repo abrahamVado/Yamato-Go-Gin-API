@@ -89,6 +89,11 @@ func (s *stubVerificationService) Resend(_ context.Context, userID string) error
 	return nil
 }
 
+// 1.- HashForUser returns a deterministic hash to emulate verification tokens.
+func (s *stubVerificationService) HashForUser(userID string) string {
+	return "hash-" + userID
+}
+
 // 1.- newStubUserStore prepares an empty store ready for use in tests.
 func newStubUserStore() *stubUserStore {
 	return &stubUserStore{users: map[string]authhttp.User{}}
@@ -108,23 +113,35 @@ func (s *stubUserStore) FindByEmail(_ context.Context, email string) (authhttp.U
 	return authhttp.User{}, authhttp.ErrUserNotFound
 }
 
+// 1.- FindByID returns the user matching the supplied identifier.
+func (s *stubUserStore) FindByID(_ context.Context, id string) (authhttp.User, error) {
+	for _, user := range s.users {
+		if user.ID == id {
+			return user, nil
+		}
+	}
+	return authhttp.User{}, authhttp.ErrUserNotFound
+}
+
 // 1.- TestRegisterAuthRoutesWiresEndpoints verifies that the router exposes the expected auth endpoints.
 func TestRegisterAuthRoutesWiresEndpoints(t *testing.T) {
 	// 2.- Configure Gin for deterministic testing and prepare dependencies.
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	store := newStubUserStore()
+	store.users["seed@example.com"] = authhttp.User{ID: "user-123", Email: "seed@example.com"}
 	authSvc := &stubAuthService{}
 	verificationSvc := &stubVerificationService{}
 	handler := authhttp.NewHandler(authSvc, store, verificationSvc)
 
-	// 3.- Seed a principal so authenticated routes can access context.
-	router.Use(func(ctx *gin.Context) {
+	// 3.- Configure the authentication middleware to populate the principal context.
+	authMiddleware := func(ctx *gin.Context) {
 		internalauth.SetPrincipal(ctx, internalauth.Principal{Subject: "user-123", Roles: []string{"member"}, Permissions: []string{"read"}})
-	})
+		ctx.Next()
+	}
 
 	// 4.- Register the routes under test using the helper.
-	RegisterAuthRoutes(router, handler)
+	RegisterAuthRoutes(router, handler, authMiddleware)
 
 	// 5.- Exercise the registration endpoint and ensure persistence was invoked.
 	registerBody, _ := json.Marshal(map[string]string{"email": "new@example.com", "password": "secretpass"})

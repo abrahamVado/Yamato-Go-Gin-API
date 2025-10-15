@@ -45,6 +45,11 @@ func (s *stubVerificationService) Resend(_ context.Context, userID string) error
 	return s.resendErr
 }
 
+// 1.- HashForUser returns a deterministic hash for assertions.
+func (s *stubVerificationService) HashForUser(userID string) string {
+	return "hash-" + userID
+}
+
 // 1.- newMemoryUserStore constructs a thread-safe in-memory repository.
 func newMemoryUserStore() *memoryUserStore {
 	return &memoryUserStore{users: map[string]User{}, byEmail: map[string]string{}}
@@ -68,6 +73,15 @@ func (m *memoryUserStore) FindByEmail(_ context.Context, email string) (User, er
 		return User{}, ErrUserNotFound
 	}
 	return m.users[id], nil
+}
+
+// 1.- FindByID returns the stored user using the identifier index.
+func (m *memoryUserStore) FindByID(_ context.Context, id string) (User, error) {
+	user, ok := m.users[id]
+	if !ok {
+		return User{}, ErrUserNotFound
+	}
+	return user, nil
 }
 
 // 1.- setupHandler constructs a handler with real token service dependencies.
@@ -127,6 +141,9 @@ func TestRegisterLoginRefreshLogoutFlow(t *testing.T) {
 	require.Equal(t, "user@example.com", registerBody.Data.User.Email)
 	require.NotEmpty(t, registerBody.Data.Tokens.AccessToken)
 	require.NotEmpty(t, registerBody.Data.Tokens.RefreshToken)
+	require.NotEmpty(t, registerBody.Data.User.Name)
+	require.NotEmpty(t, registerBody.Data.Notice)
+	require.Equal(t, "hash-"+registerBody.Data.User.ID, registerBody.Data.VerificationHash)
 
 	// 3.- Attempt a login with the same credentials; tokens must rotate.
 	loginRecorder := httptest.NewRecorder()
@@ -141,6 +158,7 @@ func TestRegisterLoginRefreshLogoutFlow(t *testing.T) {
 	require.NotNil(t, loginBody.Meta)
 	require.NotEqual(t, registerBody.Data.Tokens.AccessToken, loginBody.Data.Tokens.AccessToken)
 	require.NotEqual(t, registerBody.Data.Tokens.RefreshToken, loginBody.Data.Tokens.RefreshToken)
+	require.Equal(t, registerBody.Data.User.Name, loginBody.Data.User.Name)
 
 	// 4.- Refresh the issued tokens and ensure rotation occurs.
 	refreshRecorder := httptest.NewRecorder()
@@ -189,8 +207,11 @@ func TestRegisterLoginRefreshLogoutFlow(t *testing.T) {
 
 // 1.- TestCurrentUserEndpoint returns the principal envelope when context is populated.
 func TestCurrentUserEndpoint(t *testing.T) {
-	handler, _, _, cleanup := setupHandler(t)
+	handler, store, _, cleanup := setupHandler(t)
 	defer cleanup()
+
+	_, err := store.Create(context.Background(), User{ID: "user-123", Email: "principal@example.com", Name: "Principal"})
+	require.NoError(t, err)
 
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
@@ -209,6 +230,8 @@ func TestCurrentUserEndpoint(t *testing.T) {
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
 	require.NotNil(t, body.Meta)
 	require.Equal(t, "user-123", body.Data.Subject)
+	require.Equal(t, "principal@example.com", body.Data.Email)
+	require.Equal(t, "Principal", body.Data.Name)
 	require.Equal(t, []string{"member"}, body.Data.Roles)
 	require.Equal(t, []string{"read"}, body.Data.Permissions)
 }
