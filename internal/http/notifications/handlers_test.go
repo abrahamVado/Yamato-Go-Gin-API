@@ -20,6 +20,11 @@ type memoryService struct {
 	notifications map[string][]Notification
 }
 
+// 1.- recordingService tracks whether handler attempts to call the service layer.
+type recordingService struct {
+	called bool
+}
+
 // 1.- newMemoryService seeds notifications for deterministic testing.
 func newMemoryService() *memoryService {
 	return &memoryService{notifications: map[string][]Notification{}}
@@ -69,6 +74,18 @@ func (m *memoryService) MarkRead(_ context.Context, userID string, notificationI
 	}
 
 	return ErrNotificationNotFound
+}
+
+// 1.- List records the invocation and reports that the service was contacted.
+func (r *recordingService) List(context.Context, string, int, int) (Page, error) {
+	r.called = true
+	return Page{}, nil
+}
+
+// 1.- MarkRead marks the service as called to satisfy the interface contract.
+func (r *recordingService) MarkRead(context.Context, string, string) error {
+	r.called = true
+	return nil
 }
 
 // 1.- successPayload decodes success envelopes for assertions.
@@ -163,4 +180,33 @@ func TestMarkReadTransitionEnsuresNotificationIsMarkedRead(t *testing.T) {
 
 	require.Len(t, payload.Data.Items, 1)
 	require.NotNil(t, payload.Data.Items[0].ReadAt)
+}
+
+// 1.- TestListNotificationsRequiresPrincipal validates the authentication guard.
+func TestListNotificationsRequiresPrincipal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	// 2.- Install the recording service to observe handler behaviour.
+	service := &recordingService{}
+	handler := NewHandler(service)
+
+	// 3.- Build a Gin context without seeding a principal.
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/notifications", nil)
+
+	// 4.- Invoke the handler and verify it rejects missing authentication.
+	handler.List(ctx)
+	require.Equal(t, http.StatusUnauthorized, recorder.Code)
+
+	// 5.- Decode the response and confirm the error contract.
+	var envelope struct {
+		Message string                 `json:"message"`
+		Errors  map[string]interface{} `json:"errors"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &envelope))
+	require.Equal(t, "missing principal", envelope.Message)
+
+	// 6.- Ensure the backing service was not touched when authentication fails.
+	require.False(t, service.called)
 }
