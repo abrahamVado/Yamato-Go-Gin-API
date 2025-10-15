@@ -1,31 +1,12 @@
-# Room Occupancy Endpoint
+# WebSocket Capabilities and Occupancy
 
 ## Summary
-`GET /ws/rooms/:room/occupants` exposes the number of active WebSocket clients across all roles that are joined to a specific room. The handler is implemented in `backend/internal/ws/hub.go` and is part of `ws.Hub.RegisterRoutes`.
+The WebSocket implementation in this codebase focuses on authenticated event delivery through `internal/websocket/server.go`. There is no `GET /ws/rooms/:room/occupants` endpoint or equivalent occupancy probe wired into the Gin router.
 
-## Route
-- **Method:** `GET`
-- **Path:** `/ws/rooms/{room}/occupants`
-- **Authentication:** Not enforced.
+## Current Behavior
+- The WebSocket server authenticates clients via a bearer token advertised in the `Sec-WebSocket-Protocol` header, subscribes them to broker channels, and forwards events as JSON envelopes.
+- Routes defined in `routes/web.go` expose REST and notification APIs only; none register the WebSocket server or an occupancy endpoint.
 
-## Success Response
-- **Status:** `200 OK`
-- **Body:**
-  ```json
-  {
-    "room": "string",
-    "occupants": 0
-  }
-  ```
-
-## Failure Modes
-The handler cannot fail under normal circumstances because it only reads in-memory state. If the room is unknown, it simply reports zero occupants.
-
-## Implementation Notes
-1. The handler calls `Hub.count(room)` which iterates over `hub.rooms` and sums clients whose key suffix matches the requested room ID.
-2. Room keys are namespaced by role using the format `<role>:<room>`; `count` ignores the role while tallying.
-
-## Reproduction Checklist
-- Maintain `hub.rooms` as a map of room keys to sets of `*Client` instances.
-- Implement a `count` helper that iterates over the map with a read lock to keep the operation race-free.
-- Return the JSON envelope shown above without requiring authentication.
+## Implications for Recreation Work
+- Any recreation that requires occupancy counts must introduce new HTTP handlers and shared state—those facilities are absent today.
+- To experiment with the WebSocket server, register a route manually (for example `router.GET("/ws", gin.WrapH(http.HandlerFunc(server.Handle)))`) and attach a broker implementation capable of counting occupants if needed.
