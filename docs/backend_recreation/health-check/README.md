@@ -1,4 +1,4 @@
-# Health Check Endpoint
+# Health and Readiness Endpoints
 
 ## Summary
 The production health check reports service availability and dependency status by delegating to the diagnostics handler defined in `internal/http/diagnostics/handlers.go`. The route returns a structured success envelope emitted by `respond.Success` when all checks pass, and surfaces dependency errors when they fail.
