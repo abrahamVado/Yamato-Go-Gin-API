@@ -1,2 +1,4 @@
 [submodule "frontend"]
-	branch = develop
+	branch = main
+	path = frontend
+	url = https://github.com/abrahamVado/Yamato.git
