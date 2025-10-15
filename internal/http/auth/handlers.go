@@ -16,6 +16,12 @@ import (
 // 1.- ErrUserNotFound is returned by repositories when an email or identifier is missing.
 var ErrUserNotFound = errors.New("http/auth: user not found")
 
+// 1.- ErrInvalidVerification indicates that the supplied verification hash is not valid.
+var ErrInvalidVerification = errors.New("http/auth: invalid verification link")
+
+// 1.- ErrVerificationThrottled signals that verification resends are temporarily rate limited.
+var ErrVerificationThrottled = errors.New("http/auth: verification request throttled")
+
 // 1.- User represents the minimal information stored for authentication flows.
 type User struct {
 	ID           string `json:"id"`
@@ -42,13 +48,20 @@ type AuthService interface {
 
 // 1.- Handler wires HTTP requests to the auth service and user store dependencies.
 type Handler struct {
-	auth  AuthService
-	users UserStore
+	auth         AuthService
+	users        UserStore
+	verification EmailVerificationService
 }
 
 // 1.- NewHandler constructs a Handler with the supplied dependencies.
-func NewHandler(auth AuthService, users UserStore) Handler {
-	return Handler{auth: auth, users: users}
+func NewHandler(auth AuthService, users UserStore, verification EmailVerificationService) Handler {
+	return Handler{auth: auth, users: users, verification: verification}
+}
+
+// 1.- EmailVerificationService defines verification and resend workflows used by handlers.
+type EmailVerificationService interface {
+	Verify(ctx context.Context, userID string, hash string) error
+	Resend(ctx context.Context, userID string) error
 }
 
 // 1.- registerRequest models the expected payload for account creation.
@@ -323,4 +336,69 @@ func (h Handler) CurrentUser(ctx *gin.Context) {
 		Roles:       principal.Roles,
 		Permissions: principal.Permissions,
 	})
+}
+
+// 1.- VerifyEmail confirms a user's email address via Laravel-compatible parameters.
+func (h Handler) VerifyEmail(ctx *gin.Context) {
+	// 1.- Guard against missing verification dependencies to surface clear errors.
+	if h.verification == nil {
+		writeError(ctx, http.StatusServiceUnavailable, "verification service unavailable", nil)
+		return
+	}
+
+	// 2.- Normalize and validate required path parameters.
+	userID := strings.TrimSpace(ctx.Param("id"))
+	hash := strings.TrimSpace(ctx.Param("hash"))
+	if userID == "" || hash == "" {
+		writeError(ctx, http.StatusBadRequest, "invalid verification link", map[string]interface{}{"verification": "missing id or hash"})
+		return
+	}
+
+	// 3.- Delegate the verification logic to the backing service.
+	if err := h.verification.Verify(ctx.Request.Context(), userID, hash); err != nil {
+		switch {
+		case errors.Is(err, ErrUserNotFound):
+			writeError(ctx, http.StatusNotFound, "user not found", nil)
+		case errors.Is(err, ErrInvalidVerification):
+			writeError(ctx, http.StatusBadRequest, "invalid verification link", nil)
+		default:
+			writeError(ctx, http.StatusInternalServerError, "failed to verify email", nil)
+		}
+		return
+	}
+
+	// 4.- Respond with a Laravel-compatible success payload signalling verification completion.
+	writeSuccess(ctx, http.StatusOK, map[string]any{"verified": true})
+}
+
+// 1.- ResendVerification triggers a new verification email for the authenticated user.
+func (h Handler) ResendVerification(ctx *gin.Context) {
+	// 1.- Ensure the verification dependency is configured.
+	if h.verification == nil {
+		writeError(ctx, http.StatusServiceUnavailable, "verification service unavailable", nil)
+		return
+	}
+
+	// 2.- Require an authenticated principal mirroring Laravel's middleware behavior.
+	principal, ok := internalauth.PrincipalFromContext(ctx)
+	if !ok {
+		writeError(ctx, http.StatusUnauthorized, "authentication required", nil)
+		return
+	}
+
+	// 3.- Ask the service to deliver a new verification notification for the subject.
+	if err := h.verification.Resend(ctx.Request.Context(), principal.Subject); err != nil {
+		switch {
+		case errors.Is(err, ErrUserNotFound):
+			writeError(ctx, http.StatusNotFound, "user not found", nil)
+		case errors.Is(err, ErrVerificationThrottled):
+			writeError(ctx, http.StatusTooManyRequests, "verification resend throttled", nil)
+		default:
+			writeError(ctx, http.StatusInternalServerError, "failed to resend verification", nil)
+		}
+		return
+	}
+
+	// 4.- Return an accepted response to align with Laravel's resend semantics.
+	writeSuccess(ctx, http.StatusAccepted, map[string]any{"resent": true})
 }

@@ -21,4 +21,10 @@ func RegisterAuthRoutes(router gin.IRouter, handler authhttp.Handler) {
 	// 4.- Expose a user endpoint under /v1/user for principal introspection.
 	userGroup := v1.Group("/user")
 	userGroup.GET("", handler.CurrentUser)
+
+	// 5.- Publish Laravel-compatible verification routes outside the versioned prefix.
+	router.GET("/email/verify/:id/:hash", handler.VerifyEmail)
+
+	// 6.- Provide an endpoint to resend verification e-mails for authenticated users.
+	router.POST("/email/verification-notification", handler.ResendVerification)
 }

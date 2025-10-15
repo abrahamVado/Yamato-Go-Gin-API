@@ -34,6 +34,15 @@ All authentication endpoints consume and emit JSON payloads using the ADR-003 en
 | --- | --- | --- | --- | --- |
 | GET | `/v1/user` | Returns the authenticated subject with roles and permissions. | `Authorization: Bearer <access token>` | No body. 【F:internal/http/auth/handlers.go†L312-L325】【F:internal/httpserver/router.go†L21-L23】 |
 
+## Email Verification Compatibility
+
+These endpoints mirror Laravel's verification flows to keep the existing Next.js screens functional while Larago evolves the native implementation.【F:internal/http/auth/handlers.go†L336-L385】【F:internal/httpserver/router.go†L26-L34】
+
+| Method | Path | Description | Headers | Request |
+| --- | --- | --- | --- | --- |
+| GET | `/email/verify/{id}/{hash}` | Confirms a verification hash and marks the user as verified. | None required. | No body; `{id}` and `{hash}` must match the verification link. Error responses include ADR-003 envelopes for invalid or expired hashes.【F:internal/http/auth/handlers.go†L338-L366】 |
+| POST | `/email/verification-notification` | Resends the verification e-mail for the authenticated user. | `Authorization: Bearer <access token>` | No body. Returns HTTP 202 on success and 429 if resends are throttled.【F:internal/http/auth/handlers.go†L368-L385】 |
+
 ## Notification Endpoints (`/v1/notifications`)
 
 Authenticated users can page through notifications and mark items as read. 【F:internal/http/notifications/handlers.go†L89-L155】 Tests exercise these routes at `/v1/notifications` and `/v1/notifications/{id}`. 【F:internal/http/notifications/handlers_test.go†L100-L156】

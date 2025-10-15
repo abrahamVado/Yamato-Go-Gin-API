@@ -71,6 +71,24 @@ type stubUserStore struct {
 	users map[string]authhttp.User
 }
 
+// 1.- stubVerificationService captures verification and resend invocations.
+type stubVerificationService struct {
+	verifyCalls [][2]string
+	resendCalls []string
+}
+
+// 1.- Verify records the provided identifiers for later assertions.
+func (s *stubVerificationService) Verify(_ context.Context, userID string, hash string) error {
+	s.verifyCalls = append(s.verifyCalls, [2]string{userID, hash})
+	return nil
+}
+
+// 1.- Resend records the subject triggering the resend flow.
+func (s *stubVerificationService) Resend(_ context.Context, userID string) error {
+	s.resendCalls = append(s.resendCalls, userID)
+	return nil
+}
+
 // 1.- newStubUserStore prepares an empty store ready for use in tests.
 func newStubUserStore() *stubUserStore {
 	return &stubUserStore{users: map[string]authhttp.User{}}
@@ -97,7 +115,8 @@ func TestRegisterAuthRoutesWiresEndpoints(t *testing.T) {
 	router := gin.New()
 	store := newStubUserStore()
 	authSvc := &stubAuthService{}
-	handler := authhttp.NewHandler(authSvc, store)
+	verificationSvc := &stubVerificationService{}
+	handler := authhttp.NewHandler(authSvc, store, verificationSvc)
 
 	// 3.- Seed a principal so authenticated routes can access context.
 	router.Use(func(ctx *gin.Context) {
@@ -165,5 +184,27 @@ func TestRegisterAuthRoutesWiresEndpoints(t *testing.T) {
 	router.ServeHTTP(userRec, userReq)
 	if userRec.Code != http.StatusOK {
 		t.Fatalf("expected user endpoint to return %d, got %d", http.StatusOK, userRec.Code)
+	}
+
+	// 10.- Exercise the verification endpoint to ensure compatibility routes are mounted.
+	verifyReq := httptest.NewRequest(http.MethodGet, "/email/verify/user-123/hash-token", nil)
+	verifyRec := httptest.NewRecorder()
+	router.ServeHTTP(verifyRec, verifyReq)
+	if verifyRec.Code != http.StatusOK {
+		t.Fatalf("expected verification endpoint to return %d, got %d", http.StatusOK, verifyRec.Code)
+	}
+	if len(verificationSvc.verifyCalls) != 1 {
+		t.Fatalf("expected verification service to record a single call")
+	}
+
+	// 11.- Trigger the resend endpoint and ensure the service receives the subject.
+	resendReq := httptest.NewRequest(http.MethodPost, "/email/verification-notification", nil)
+	resendRec := httptest.NewRecorder()
+	router.ServeHTTP(resendRec, resendReq)
+	if resendRec.Code != http.StatusAccepted {
+		t.Fatalf("expected resend endpoint to return %d, got %d", http.StatusAccepted, resendRec.Code)
+	}
+	if len(verificationSvc.resendCalls) != 1 || verificationSvc.resendCalls[0] != "user-123" {
+		t.Fatalf("expected resend to capture the authenticated subject")
 	}
 }
