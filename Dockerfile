@@ -44,16 +44,25 @@ RUN --mount=type=cache,target=/var/cache/apt --mount=type=cache,target=/var/lib/
     apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && \
     rm -rf /var/lib/apt/lists/*
 
-# 2.- Establish the working directory used by the container.
+# 2.- Establish a dedicated application user to drop root privileges.
+RUN groupadd --system yamato && useradd --system --gid yamato --create-home yamato
+
+# 3.- Establish the working directory used by the container.
 WORKDIR /app
 
-# 3.- Copy the API binary built in the previous stage.
+# 4.- Copy the API binary built in the previous stage.
 COPY --from=builder /out/api /usr/local/bin/api
 
-# 4.- Expose the HTTP port consumed by docker-compose.
+# 5.- Ensure runtime defaults align with production expectations.
+ENV GIN_MODE=release
+
+# 6.- Expose the HTTP port consumed by docker-compose.
 EXPOSE 8080
 
-# 5.- Run the API binary as the container entrypoint.
+# 7.- Execute the API as the non-root application user.
+USER yamato
+
+# 8.- Run the API binary as the container entrypoint.
 ENTRYPOINT ["/usr/local/bin/api"]
 
 # -----------------------------------------------------------------------------
@@ -66,11 +75,17 @@ RUN --mount=type=cache,target=/var/cache/apt --mount=type=cache,target=/var/lib/
     apt-get update && apt-get install -y --no-install-recommends ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-# 2.- Establish the working directory used by the container.
+# 2.- Establish a dedicated application user to drop root privileges.
+RUN groupadd --system yamato && useradd --system --gid yamato --create-home yamato
+
+# 3.- Establish the working directory used by the container.
 WORKDIR /app
 
-# 3.- Copy the worker binary built in the shared builder stage.
+# 4.- Copy the worker binary built in the shared builder stage.
 COPY --from=builder /out/worker /usr/local/bin/worker
 
-# 4.- Run the worker process on container startup.
+# 5.- Execute the worker using the non-root identity for least privilege.
+USER yamato
+
+# 6.- Run the worker process on container startup.
 ENTRYPOINT ["/usr/local/bin/worker"]
