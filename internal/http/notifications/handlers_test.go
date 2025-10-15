@@ -77,6 +77,10 @@ type successPayload[T any] struct {
 	Meta map[string]any `json:"meta"`
 }
 
+type listBody struct {
+	Items []Notification `json:"items"`
+}
+
 // 1.- TestListNotificationsProvidesPaginationMeta validates pagination output.
 func TestListNotificationsProvidesPaginationMeta(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -104,11 +108,11 @@ func TestListNotificationsProvidesPaginationMeta(t *testing.T) {
 	handler.List(ctx)
 	require.Equal(t, http.StatusOK, recorder.Code)
 
-	var payload successPayload[[]Notification]
+	var payload successPayload[listBody]
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &payload))
 
-	require.Len(t, payload.Data, 10)
-	require.Equal(t, "notif-11", payload.Data[0].ID)
+	require.Len(t, payload.Data.Items, 10)
+	require.Equal(t, "notif-11", payload.Data.Items[0].ID)
 
 	pagination, ok := payload.Meta["pagination"].(map[string]any)
 	require.True(t, ok)
@@ -154,9 +158,9 @@ func TestMarkReadTransitionEnsuresNotificationIsMarkedRead(t *testing.T) {
 	handler.List(listCtx)
 	require.Equal(t, http.StatusOK, listRecorder.Code)
 
-	var payload successPayload[[]Notification]
+	var payload successPayload[listBody]
 	require.NoError(t, json.Unmarshal(listRecorder.Body.Bytes(), &payload))
 
-	require.Len(t, payload.Data, 1)
-	require.NotNil(t, payload.Data[0].ReadAt)
+	require.Len(t, payload.Data.Items, 1)
+	require.NotNil(t, payload.Data.Items[0].ReadAt)
 }

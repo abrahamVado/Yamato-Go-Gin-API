@@ -26,6 +26,7 @@ var ErrVerificationThrottled = errors.New("http/auth: verification request throt
 type User struct {
 	ID           string `json:"id"`
 	Email        string `json:"email"`
+	Name         string `json:"name"`
 	PasswordHash string `json:"-"`
 }
 
@@ -35,6 +36,8 @@ type UserStore interface {
 	Create(ctx context.Context, user User) (User, error)
 	// 3.- FindByEmail retrieves a user by e-mail or returns ErrUserNotFound.
 	FindByEmail(ctx context.Context, email string) (User, error)
+	// 4.- FindByID retrieves a user by identifier when loading principals.
+	FindByID(ctx context.Context, id string) (User, error)
 }
 
 // 1.- AuthService defines the subset of the core auth service used by handlers.
@@ -62,12 +65,14 @@ func NewHandler(auth AuthService, users UserStore, verification EmailVerificatio
 type EmailVerificationService interface {
 	Verify(ctx context.Context, userID string, hash string) error
 	Resend(ctx context.Context, userID string) error
+	HashForUser(userID string) string
 }
 
 // 1.- registerRequest models the expected payload for account creation.
 type registerRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+	Name     string `json:"name"`
 }
 
 // 1.- loginRequest models credential-based authentication attempts.
@@ -97,8 +102,10 @@ type tokenEnvelope struct {
 
 // 1.- registerResponse bundles the created user and issued tokens.
 type registerResponse struct {
-	User   User          `json:"user"`
-	Tokens tokenEnvelope `json:"tokens"`
+	User             User          `json:"user"`
+	Tokens           tokenEnvelope `json:"tokens"`
+	Notice           string        `json:"notice,omitempty"`
+	VerificationHash string        `json:"verification_hash,omitempty"`
 }
 
 // 1.- loginResponse mirrors registerResponse for successful logins.
@@ -110,6 +117,8 @@ type loginResponse struct {
 // 1.- principalResponse mirrors auth.Principal details for the /user endpoint.
 type principalResponse struct {
 	Subject     string   `json:"subject"`
+	Email       string   `json:"email"`
+	Name        string   `json:"name"`
 	Roles       []string `json:"roles"`
 	Permissions []string `json:"permissions"`
 }
@@ -171,12 +180,32 @@ func (h Handler) Register(ctx *gin.Context) {
 	// 2.- Normalize and validate required fields.
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
 	req.Password = strings.TrimSpace(req.Password)
+	req.Name = strings.TrimSpace(req.Name)
 	if req.Email == "" || req.Password == "" {
 		writeError(ctx, http.StatusBadRequest, "validation failed", map[string]interface{}{"validation": map[string][]map[string]any{}})
 		return
 	}
 
-	// 3.- Guard against duplicate registrations for the same email address.
+	// 4.- Derive a default display name when none is supplied.
+	if req.Name == "" {
+		if at := strings.Index(req.Email, "@"); at > 0 {
+			local := strings.ReplaceAll(req.Email[:at], ".", " ")
+			words := strings.Fields(local)
+			for i, word := range words {
+				if len(word) == 0 {
+					continue
+				}
+				lower := strings.ToLower(word)
+				words[i] = strings.ToUpper(lower[:1]) + lower[1:]
+			}
+			req.Name = strings.Join(words, " ")
+		}
+		if req.Name == "" {
+			req.Name = req.Email
+		}
+	}
+
+	// 5.- Guard against duplicate registrations for the same email address.
 	if _, err := h.users.FindByEmail(ctx.Request.Context(), req.Email); err == nil {
 		writeError(ctx, http.StatusConflict, "account already exists", nil)
 		return
@@ -185,30 +214,43 @@ func (h Handler) Register(ctx *gin.Context) {
 		return
 	}
 
-	// 4.- Hash the provided password prior to persistence.
+	// 6.- Hash the provided password prior to persistence.
 	hashed, err := h.auth.HashPassword(req.Password)
 	if err != nil {
 		writeError(ctx, http.StatusInternalServerError, "failed to hash password", nil)
 		return
 	}
 
-	// 5.- Persist the new user record via the store abstraction.
-	user := User{ID: uuid.NewString(), Email: req.Email, PasswordHash: hashed}
+	// 7.- Persist the new user record via the store abstraction.
+	user := User{ID: uuid.NewString(), Email: req.Email, Name: req.Name, PasswordHash: hashed}
 	created, err := h.users.Create(ctx.Request.Context(), user)
 	if err != nil {
 		writeError(ctx, http.StatusInternalServerError, "failed to create user", nil)
 		return
 	}
 
-	// 6.- Issue a fresh token pair for the registered user.
+	// 8.- Issue a fresh token pair for the registered user.
 	pair, err := h.auth.Login(ctx.Request.Context(), created.ID)
 	if err != nil {
 		writeError(ctx, http.StatusInternalServerError, "failed to issue tokens", nil)
 		return
 	}
 
-	// 7.- Return the success envelope with the new user and tokens.
-	writeSuccess(ctx, http.StatusCreated, registerResponse{User: User{ID: created.ID, Email: created.Email}, Tokens: pairToEnvelope(pair)})
+	// 9.- Compose a verification notice mirroring Laravel's onboarding flow.
+	notice := "Please verify your email address for {email}."
+	verificationHash := ""
+	if h.verification != nil {
+		verificationHash = h.verification.HashForUser(created.ID)
+		notice = notice + " Use the link in your inbox to complete setup."
+	}
+
+	// 10.- Return the success envelope with the new user, tokens, and verification metadata.
+	writeSuccess(ctx, http.StatusCreated, registerResponse{
+		User:             User{ID: created.ID, Email: created.Email, Name: created.Name},
+		Tokens:           pairToEnvelope(pair),
+		Notice:           notice,
+		VerificationHash: verificationHash,
+	})
 }
 
 // 1.- Login authenticates an existing user and returns a rotated token pair.
@@ -253,7 +295,7 @@ func (h Handler) Login(ctx *gin.Context) {
 	}
 
 	// 6.- Return the authenticated user and token envelope.
-	writeSuccess(ctx, http.StatusOK, loginResponse{User: User{ID: user.ID, Email: user.Email}, Tokens: pairToEnvelope(pair)})
+	writeSuccess(ctx, http.StatusOK, loginResponse{User: User{ID: user.ID, Email: user.Email, Name: user.Name}, Tokens: pairToEnvelope(pair)})
 }
 
 // 1.- Refresh rotates refresh tokens and returns a new token pair.
@@ -330,9 +372,22 @@ func (h Handler) CurrentUser(ctx *gin.Context) {
 		return
 	}
 
-	// 2.- Return the principal details as a success envelope.
+	// 2.- Load the persisted user so contact details can be returned alongside roles.
+	user, err := h.users.FindByID(ctx.Request.Context(), principal.Subject)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			writeError(ctx, http.StatusNotFound, "user not found", nil)
+			return
+		}
+		writeError(ctx, http.StatusInternalServerError, "failed to load user", nil)
+		return
+	}
+
+	// 3.- Return the principal details as a success envelope.
 	writeSuccess(ctx, http.StatusOK, principalResponse{
 		Subject:     principal.Subject,
+		Email:       user.Email,
+		Name:        user.Name,
 		Roles:       principal.Roles,
 		Permissions: principal.Permissions,
 	})
