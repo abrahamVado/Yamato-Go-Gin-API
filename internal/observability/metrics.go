@@ -50,7 +50,7 @@ func NewMetrics(service string, opts ...MetricsOption) (*Metrics, error) {
 	// 1.- Normalize the service label used by the collectors.
 	trimmedService := strings.TrimSpace(service)
 	if trimmedService == "" {
-		trimmedService = "Yamato API"
+		trimmedService = "Larago API"
 	}
 
 	// 2.- Create a standalone registry so unit tests can safely inspect collector output.

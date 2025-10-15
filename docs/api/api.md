@@ -1,6 +1,6 @@
-# Yamato API Endpoint Catalog
+# Larago API Endpoint Catalog
 
-This catalog enumerates the HTTP endpoints exposed by the Yamato Go Gin service and summarizes the headers, request bodies, and query parameters required to interact with them. Authentication-sensitive handlers assume a Bearer token authentication middleware that injects an `auth.Principal` into the Gin context; provide an `Authorization: Bearer <access token>` header when a handler calls `internalauth.PrincipalFromContext` or the admin RBAC middleware. 【F:internal/http/auth/handlers.go†L312-L325】【F:internal/http/admin/handlers.go†L239-L270】
+This catalog enumerates the HTTP endpoints exposed by the Larago Go Gin service and summarizes the headers, request bodies, and query parameters required to interact with them. Authentication-sensitive handlers assume a Bearer token authentication middleware that injects an `auth.Principal` into the Gin context; provide an `Authorization: Bearer <access token>` header when a handler calls `internalauth.PrincipalFromContext` or the admin RBAC middleware. 【F:internal/http/auth/handlers.go†L312-L325】【F:internal/http/admin/handlers.go†L239-L270】
 
 ## Conventions
 

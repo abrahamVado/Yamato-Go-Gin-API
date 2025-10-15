@@ -16,7 +16,7 @@ func (hc HealthController) Status(ctx *gin.Context) {
 	// 1.- Build a minimal JSON response with service metadata.
 	payload := gin.H{
 		"status":  "ok",
-		"service": "Yamato API",
+		"service": "Larago API",
 	}
 
 	// 2.- Send the payload with an HTTP 200 status code.

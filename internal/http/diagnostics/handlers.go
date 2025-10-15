@@ -59,7 +59,7 @@ func NewHandler(service string, opts ...Option) Handler {
 
 	// 3.- Guarantee the service label is never empty for response payloads.
 	if strings.TrimSpace(h.service) == "" {
-		h.service = "Yamato API"
+		h.service = "Larago API"
 	}
 
 	return h
