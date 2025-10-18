@@ -89,19 +89,20 @@ func TestMigratorApply(t *testing.T) {
 	}
 
 	//5.- Validate that the most critical tables exist by querying PostgreSQL metadata.
-	requiredTables := []string{
-		"users",
-		"roles",
-		"permissions",
-		"role_permissions",
-		"user_roles",
-		"teams",
-		"team_members",
-		"modules",
-		"settings",
-		"notifications",
-		"join_requests",
-	}
+        requiredTables := []string{
+                "users",
+                "roles",
+                "permissions",
+                "role_permissions",
+                "user_roles",
+                "teams",
+                "team_members",
+                "modules",
+                "settings",
+                "notifications",
+                "join_requests",
+                "tasks",
+        }
 
 	for _, table := range requiredTables {
 		var result sql.NullString

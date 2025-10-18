@@ -36,10 +36,11 @@ func (m *Migrator) Apply(ctx context.Context) error {
 	}
 
 	//2.- Build the ordered list of migration directories that must be processed.
-	migrationDirs := []string{
-		"0001_core",
-		"0002_join_requests",
-	}
+        migrationDirs := []string{
+                "0001_core",
+                "0002_join_requests",
+                "0003_tasks",
+        }
 
 	for _, migrationDir := range migrationDirs {
 		//3.- Collect every SQL file in the directory and sort them for deterministic execution.
