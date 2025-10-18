@@ -1,6 +1,8 @@
 package routes
 
 import (
+	"context"
+	"database/sql"
 	"net/http"
 	"os"
 	"time"
@@ -17,6 +19,10 @@ import (
 	"github.com/example/Yamato-Go-Gin-API/internal/middleware"
 	"github.com/example/Yamato-Go-Gin-API/internal/observability"
 	memoryplatform "github.com/example/Yamato-Go-Gin-API/internal/platform/memory"
+	storagetasks "github.com/example/Yamato-Go-Gin-API/internal/storage/tasks"
+	dbtooling "github.com/example/Yamato-Go-Gin-API/internal/tooling/db"
+	_ "github.com/lib/pq"
+	"go.uber.org/zap"
 )
 
 // 1.- options captures optional dependencies used while registering routes.
@@ -95,7 +101,7 @@ func RegisterRoutes(router *gin.Engine, opts ...Option) {
 	notificationSvc := memoryplatform.NewNotificationService(memoryplatform.DefaultNotifications())
 	notificationHandler := notificationshttp.NewHandler(notificationSvc)
 
-	taskSvc := memoryplatform.NewTaskService(memoryplatform.DefaultTasks())
+	taskSvc := resolveTaskService()
 	taskHandler := taskhttp.NewHandler(taskSvc)
 
 	// 9.- Provide an unauthenticated tasks endpoint consumed by the Next.js frontend.
@@ -110,4 +116,46 @@ func RegisterRoutes(router *gin.Engine, opts ...Option) {
 	notificationsGroup := protected.Group("/notifications")
 	notificationsGroup.GET("", notificationHandler.List)
 	notificationsGroup.PATCH(":id", notificationHandler.MarkRead)
+}
+
+// 1.- resolveTaskService attempts to build a Postgres-backed task service with a memory fallback.
+func resolveTaskService() taskhttp.Service {
+	service, err := newPostgresTaskService()
+	if err != nil {
+		zap.L().Warn("falling back to in-memory task service", zap.Error(err))
+		return memoryplatform.NewTaskService(memoryplatform.DefaultTasks())
+	}
+	return service
+}
+
+// 1.- newPostgresTaskService opens a database connection and returns a repository-backed service.
+func newPostgresTaskService() (taskhttp.Service, error) {
+	dsn, err := dbtooling.BuildPostgresDSNFromEnv()
+	if err != nil {
+		return nil, err
+	}
+
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		return nil, err
+	}
+
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxIdleTime(5 * time.Minute)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
+		db.Close()
+		return nil, err
+	}
+
+	repo, err := storagetasks.NewRepository(db)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+
+	return repo, nil
 }
