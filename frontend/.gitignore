@@ -1,4 +1,0 @@
-#1.- Ignore runtime build artifacts for the Next.js frontend.
-.next
-node_modules
-out
