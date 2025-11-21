@@ -20,9 +20,12 @@ import (
 	"github.com/example/Yamato-Go-Gin-API/internal/observability"
 	memoryplatform "github.com/example/Yamato-Go-Gin-API/internal/platform/memory"
 	storagetasks "github.com/example/Yamato-Go-Gin-API/internal/storage/tasks"
+	userstore "github.com/example/Yamato-Go-Gin-API/internal/storage/users"
 	dbtooling "github.com/example/Yamato-Go-Gin-API/internal/tooling/db"
+
+	appcontrollers "github.com/example/Yamato-Go-Gin-API/app/http/controllers"
+
 	_ "github.com/lib/pq"
-	"go.uber.org/zap"
 )
 
 // 1.- options captures optional dependencies used while registering routes.
@@ -48,6 +51,26 @@ func RegisterRoutes(router *gin.Engine, opts ...Option) {
 		opt(&configured)
 	}
 
+	// 1.1.- Open Postgres connection shared across HTTP services.
+	dsn, err := dbtooling.BuildPostgresDSNFromEnv()
+	if err != nil {
+		panic(err)
+	}
+
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		panic(err)
+	}
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxIdleTime(5 * time.Minute)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
+		panic(err)
+	}
+
 	// 2.- Prepare diagnostics handlers responsible for service monitoring.
 	diagHandler := diagnostics.NewHandler("Larago API")
 
@@ -71,7 +94,7 @@ func RegisterRoutes(router *gin.Engine, opts ...Option) {
 		router.GET("/metrics", gin.WrapH(configured.metrics.Handler()))
 	}
 
-	// 8.- Bootstrap in-memory platform services for local development flows.
+	// 8.- Bootstrap auth services and repositories.
 	jwtSecret := os.Getenv("JWT_SECRET")
 	if jwtSecret == "" {
 		jwtSecret = "development-jwt-secret"
@@ -92,70 +115,49 @@ func RegisterRoutes(router *gin.Engine, opts ...Option) {
 		panic(err)
 	}
 
-	userStore := memoryplatform.NewUserStore()
+	// Use Postgres-backed user store instead of in-memory.
+	var userStore authhttp.UserStore = userstore.NewStore(db)
+
 	verificationSvc := memoryplatform.NewVerificationService(userStore, jwtSecret, time.Minute)
+
+	// 9.- Build HTTP handlers/controllers for auth, phone verification, notifications and tasks.
 	authHandler := authhttp.NewHandler(authSvc, userStore, verificationSvc)
 	authMiddleware := middleware.Authentication(authSvc, userStore)
 	httpserver.RegisterAuthRoutes(router, authHandler, authMiddleware)
 
+	// phone verification controller (from app/http/controllers/phone_verification_controller.go)
+	phoneCtrl := appcontrollers.NewPhoneVerificationController(db)
+
 	notificationSvc := memoryplatform.NewNotificationService(memoryplatform.DefaultNotifications())
 	notificationHandler := notificationshttp.NewHandler(notificationSvc)
 
-	taskSvc := resolveTaskService()
+	// Tasks backed by Postgres using the same db handle.
+	taskSvc, err := storagetasks.NewRepository(db)
+	if err != nil {
+		panic(err)
+	}
 	taskHandler := taskhttp.NewHandler(taskSvc)
 
-	// 9.- Provide an unauthenticated tasks endpoint consumed by the Next.js frontend.
+	// 10.- Public API endpoints (no authentication required).
 	api.GET("/tasks", taskHandler.List)
 
-	// 10.- Continue exposing authenticated task and notification endpoints under /v1.
+	// 10.1.- Phone verification public endpoints.
+	api.POST("/phone-verifications", phoneCtrl.RequestCode)
+	api.POST("/phone-verifications/confirm", phoneCtrl.ConfirmCode)
+
+	// 11.- Authenticated API endpoints under /v1.
 	protected := router.Group("/v1")
 	protected.Use(authMiddleware)
+
+	// 11.1.- Authenticated tasks.
 	protected.GET("/tasks", taskHandler.List)
 
-	// 11.- Surface notification management endpoints alongside tasks for the dashboard.
+	// 11.2.- Authenticated notification management for the dashboard.
 	notificationsGroup := protected.Group("/notifications")
 	notificationsGroup.GET("", notificationHandler.List)
 	notificationsGroup.PATCH(":id", notificationHandler.MarkRead)
-}
 
-// 1.- resolveTaskService attempts to build a Postgres-backed task service with a memory fallback.
-func resolveTaskService() taskhttp.Service {
-	service, err := newPostgresTaskService()
-	if err != nil {
-		zap.L().Warn("falling back to in-memory task service", zap.Error(err))
-		return memoryplatform.NewTaskService(memoryplatform.DefaultTasks())
-	}
-	return service
-}
-
-// 1.- newPostgresTaskService opens a database connection and returns a repository-backed service.
-func newPostgresTaskService() (taskhttp.Service, error) {
-	dsn, err := dbtooling.BuildPostgresDSNFromEnv()
-	if err != nil {
-		return nil, err
-	}
-
-	db, err := sql.Open("postgres", dsn)
-	if err != nil {
-		return nil, err
-	}
-
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxIdleTime(5 * time.Minute)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if err := db.PingContext(ctx); err != nil {
-		db.Close()
-		return nil, err
-	}
-
-	repo, err := storagetasks.NewRepository(db)
-	if err != nil {
-		db.Close()
-		return nil, err
-	}
-
-	return repo, nil
+	// 11.3.- Authenticated listing of unverified phone verifications for operators.
+	// Example: GET /v1/phone-verifications/unverified
+	protected.GET("/phone-verifications/unverified", phoneCtrl.ListUnverified)
 }

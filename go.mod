@@ -2,6 +2,8 @@ module github.com/example/Yamato-Go-Gin-API
 
 go 1.22.0
 
+toolchain go1.22.3
+
 require (
 	github.com/alicebob/miniredis/v2 v2.35.0
 	github.com/gin-contrib/cors v1.7.3

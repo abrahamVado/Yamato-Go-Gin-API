@@ -40,6 +40,7 @@ func (m *Migrator) Apply(ctx context.Context) error {
                 "0001_core",
                 "0002_join_requests",
                 "0003_tasks",
+                "0004_verification",
         }
 
 	for _, migrationDir := range migrationDirs {

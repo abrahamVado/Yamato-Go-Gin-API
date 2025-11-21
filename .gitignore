@@ -1,4 +1,10 @@
-# Ignore binaries compiled by Docker builds or local development.
-/api
-/worker
-/frontentd
+.git
+.gitignore
+node_modules
+**/node_modules
+web/.next/cache
+web/.next/static/cache
+Dockerfile
+docker-compose.yml
+frontend/Dockerfile
+frontend/docker-compose.yml
